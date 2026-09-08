@@ -490,6 +490,9 @@ public:
         iteration_report();
       }
     }
+
+    this->finalize();
+
     if (!this->m_verbosity.has_value() || this->m_verbosity >= Verbosity::Summary) {
       summary_report();
     }
@@ -666,6 +669,8 @@ protected:
   }
 
   bool end_iteration_needed() override { return m_end_iteration_needed; }
+
+  void finalize() override {}
 
 
   std::shared_ptr<ArrayHandlers<R, Q, P>> m_handlers;                    //!< Array handlers

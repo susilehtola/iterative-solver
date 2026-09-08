@@ -59,17 +59,34 @@ protected:
     auto evec = std::vector<value_type>{};
     int verbosity = convert_verbosity(m_logger->verbosity());
     itsolv::eigenproblem(evec, m_eigenvalues, h.data(), s.data(), dim, m_hermitian, m_svd_solver_threshold, verbosity,
-                         true);
+                         &m_imag_eigval_comps);
     size_t n_solutions = 0;
     if (dim)
       n_solutions = evec.size() / dim;
     auto full_matrix = Matrix<value_type>{std::move(evec), {n_solutions, dim}};
     auto nroots = std::min(nroots_max, n_solutions);
     m_eigenvalues.resize(nroots);
+    auto [first, last] = std::ranges::remove_if(
+        m_imag_eigval_comps, [nroots](std::size_t idx) { return idx >= nroots; },
+        &decltype(m_imag_eigval_comps)::value_type::first);
+    if (first != last && (std::ranges::distance(first, last) % 2) != 0) {
+      m_logger->info("Complex eigenvalue pair split up due to truncation to requested number of roots");
+    }
+    m_imag_eigval_comps.erase(first, last);
     m_solutions.resize({nroots, dim});
     m_solutions.slice() = full_matrix.slice({0, 0}, {nroots, dim});
     m_errors.assign(size(), std::numeric_limits<value_type_abs>::max());
     m_logger->data_dump<10>("eigenvalues = ", m_eigenvalues);
+    if (!m_imag_eigval_comps.empty()) {
+      m_logger->info("The following eigenvalues turned out to be complex-valued: ",
+                     m_imag_eigval_comps |
+                         std::ranges::views::transform([](const auto& pair) { return pair.first + 1; }));
+      m_logger->data_dump("imaginary parts of eigenvalues = ",
+                          m_imag_eigval_comps | std::ranges::views::transform([](auto pair) {
+                            pair.first += 1;
+                            return pair;
+                          }));
+    }
     m_logger->data_dump("eigenvectors = ", m_solutions);
   }
 
@@ -85,6 +102,7 @@ protected:
     const auto n_solutions = rhs.cols();
     auto solution = std::vector<value_type>{};
     m_eigenvalues.assign(n_solutions, 0);
+    m_imag_eigval_comps.clear();
     int verbosity = convert_verbosity(m_logger->verbosity());
     itsolv::solve_LinearEquations(solution, m_eigenvalues, h.data(), s.data(), rhs.data(), dim, n_solutions,
                                   m_augmented_hessian, m_svd_solver_threshold, verbosity);
@@ -104,6 +122,7 @@ public:
 
   const Matrix<value_type>& solutions() const override { return m_solutions; }
   const std::vector<value_type>& eigenvalues() const override { return m_eigenvalues; }
+  const std::vector<std::pair<std::size_t, value_type>>& imag_eigval_components() const { return m_imag_eigval_comps; }
   const std::vector<value_type_abs>& errors() const override { return m_errors; }
 
   //! Number of solutions
@@ -120,9 +139,10 @@ public:
   double get_augmented_hessian() { return m_augmented_hessian; }
 
 protected:
-  Matrix<value_type> m_solutions;        //!< solution matrix with row vectors
-  std::vector<value_type> m_eigenvalues; //!< eigenvalues
-  std::vector<value_type_abs> m_errors;  //!< errors in subspace solutions
+  Matrix<value_type> m_solutions;                                      //!< solution matrix with row vectors
+  std::vector<value_type> m_eigenvalues;                               //!< eigenvalues
+  std::vector<std::pair<std::size_t, value_type>> m_imag_eigval_comps; //!< eigenvalues
+  std::vector<value_type_abs> m_errors;                                //!< errors in subspace solutions
   std::shared_ptr<Logger> m_logger{};
 
 public:

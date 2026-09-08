@@ -41,8 +41,7 @@ public:
       : SolverTemplate(std::make_shared<subspace::XSpace<R, Q, P>>(handlers, logger_),
                        std::static_pointer_cast<subspace::ISubspaceSolver<R, Q, P>>(
                            std::make_shared<subspace::SubspaceSolverRSPT<R, Q, P>>(logger_)),
-                       handlers, std::make_shared<Statistics>(), logger_),
-        logger(logger_) {
+                       handlers, std::make_shared<Statistics>(), logger_) {
     //    set_hermiticity(true);
     auto xspace = std::dynamic_pointer_cast<subspace::XSpace<R, Q, P>>(this->m_xspace);
     xspace->set_hermiticity(true);
@@ -144,7 +143,6 @@ public:
     return opt;
   }
 
-  std::shared_ptr<Logger> logger;
   double propose_rspace_norm_thresh = 1e-10; //!< vectors with norm less than threshold can be considered null.
   double propose_rspace_svd_thresh = 1e-12;  //!< the smallest singular value in the subspace that can be allowed when
   //!< constructing the working set. Smaller singular values will lead to

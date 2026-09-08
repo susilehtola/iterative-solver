@@ -131,6 +131,14 @@ concept context = requires(const T &t) {
 template< typename Ctx, typename ...Args >
 concept context_uses_correct_arg_types = context<Ctx> && std::derived_from<Ctx, ContextBase<Ctx, Ctx::uses_fixed_arguments, Args...>>;
 
+/*!
+ * Concept checking that a given type is pair-like object
+ */
+template <typename T>
+concept pair_like = requires(const std::remove_cvref_t<T> &t) {
+  t.first;
+  t.second;
+};
 
 /*!
  * Concept checking that a given type supports operator<< into an output stream
@@ -152,10 +160,10 @@ concept formattable = requires (const std::remove_cvref_t<T> &t, std::format_con
  * Concept checking that the provided range can be converted into a string by either
  * using std::format or operator<<
  */
-template<typename T>
-concept string_convertible_range = std::ranges::range<T>
-  && (formattable<std::ranges::range_value_t<T>> || streamable<std::ranges::range_value_t<T>>);
-
+template <typename T>
+concept string_convertible_range =
+    std::ranges::range<T> && (formattable<std::ranges::range_value_t<T>> || streamable<std::ranges::range_value_t<T>> ||
+                              pair_like<std::ranges::range_value_t<T>>);
 
 /*!
  * Compile-time, constexpr-capable (fixed-size) string-like object
@@ -317,12 +325,11 @@ struct FormatOption {
   }
 };
 
-
 /*!
  * Converts the given type into a string
  */
-template<context Context, std::size_t precision = default_precision, typename T>
-requires(formattable<T> || streamable<T> || string_convertible_range<T>)
+template <context Context, std::size_t precision = default_precision, typename T>
+  requires(formattable<T> || streamable<T> || string_convertible_range<T> || pair_like<T>)
 static std::string stringify(T &&t) {
   using FOpts = FormatOption<Context, std::remove_cvref_t<T>, precision>;
 
@@ -333,6 +340,13 @@ static std::string stringify(T &&t) {
     std::stringstream sstream;
     FOpts::prepare_stream(sstream);
     sstream << t;
+    return sstream.str();
+  } else if constexpr (pair_like<T>) {
+    std::stringstream sstream;
+
+    sstream << "{ " << stringify<Context, precision>(t.first) << ": " << stringify<Context, precision>(t.second)
+            << " }";
+
     return sstream.str();
   } else {
     std::stringstream sstream;

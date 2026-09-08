@@ -298,6 +298,12 @@ public:
   virtual size_t end_iteration(const VecRef<R>& parameters, const VecRef<R>& residual) = 0;
 
   /*!
+   * Callback invoked once the solver iterations are done but before the solve function returns
+   * to the caller. Behaviour depends on the solver.
+   */
+  virtual void finalize() = 0;
+
+  /*!
    * @brief signal whether end_iteration should be called
    */
   virtual bool end_iteration_needed() = 0;

@@ -41,8 +41,7 @@ public:
       : SolverTemplate(std::make_shared<subspace::XSpace<R, Q, P>>(handlers, logger_),
                        std::static_pointer_cast<subspace::ISubspaceSolver<R, Q, P>>(
                            std::make_shared<subspace::SubspaceSolverLinEig<R, Q, P>>(logger_)),
-                       handlers, std::make_shared<Statistics>(), logger_),
-        logger(logger_) {
+                       handlers, std::make_shared<Statistics>(), logger_) {
     set_hermiticity(m_hermiticity);
     this->m_normalise_solution = false;
   }
@@ -190,7 +189,6 @@ public:
     if (endl)
       cout << std::endl;
   }
-  std::shared_ptr<Logger> logger;
 
 protected:
   // FIXME The scale is fixed by the norm of RHS, but if RHS=0 there is no reference. We could use the norm of params

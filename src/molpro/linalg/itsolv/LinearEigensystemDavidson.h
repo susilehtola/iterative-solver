@@ -1,19 +1,35 @@
 #ifndef LINEARALGEBRA_SRC_MOLPRO_LINALG_ITSOLV_LINEAREIGENSYSTEMDAVIDSON_H
 #define LINEARALGEBRA_SRC_MOLPRO_LINALG_ITSOLV_LINEAREIGENSYSTEMDAVIDSON_H
-#include <iterator>
-#include <map>
 #include <molpro/Profiler.h>
 #include <molpro/linalg/itsolv/CastOptions.h>
 #include <molpro/linalg/itsolv/DSpaceResetter.h>
 #include <molpro/linalg/itsolv/IterativeSolverTemplate.h>
 #include <molpro/linalg/itsolv/Logger.h>
+#include <molpro/linalg/itsolv/helper.h>
 #include <molpro/linalg/itsolv/propose_rspace.h>
 #include <molpro/linalg/itsolv/qspace_options.h>
 #include <molpro/linalg/itsolv/rspace_options.h>
 #include <molpro/linalg/itsolv/subspace/SubspaceSolverLinEig.h>
 #include <molpro/linalg/itsolv/subspace/XSpace.h>
 
+#include <algorithm>
+#include <cassert>
+#include <iterator>
+#include <map>
+
 namespace molpro::linalg::itsolv {
+
+namespace log {
+
+template< typename value_type >
+struct ComplexRootsDavidson : ContextBase<ComplexRootsDavidson<value_type>, true, std::vector<std::pair<std::size_t, value_type>>> {
+	static const char *name;
+};
+template<typename value_type>
+const char *ComplexRootsDavidson<value_type>::name = "ComplexRootsDavidson";
+static_assert(context<ComplexRootsDavidson<double>>);
+
+}
 
 /*!
  * @brief One specific implementation of LinearEigensystem using Davidson's algorithm
@@ -39,8 +55,7 @@ public:
       : SolverTemplate(std::make_shared<subspace::XSpace<R, Q, P>>(handlers, logger_),
                        std::static_pointer_cast<subspace::ISubspaceSolver<R, Q, P>>(
                            std::make_shared<subspace::SubspaceSolverLinEig<R, Q, P>>(logger_)),
-                       handlers, std::make_shared<Statistics>(), logger_),
-        logger(logger_) {
+                       handlers, std::make_shared<Statistics>(), logger_) {
     set_hermiticity(m_hermiticity);
     this->m_normalise_solution = false;
   }
@@ -91,6 +106,29 @@ public:
     auto wparams = std::vector<std::reference_wrapper<R>>{std::ref(parameters)};
     auto wactions = std::vector<std::reference_wrapper<R>>{std::ref(actions)};
     return end_iteration(wparams, wactions);
+  }
+
+  void finalize() override {
+    if constexpr (is_complex<typename R::value_type>::value) {
+      return;
+    }
+
+    auto subspace_solver = std::dynamic_pointer_cast<subspace::SubspaceSolverLinEig<R, Q, P>>(this->m_subspace_solver);
+    assert(subspace_solver);
+    auto imag_eigval_components = subspace_solver->imag_eigval_components();
+    if (imag_eigval_components.empty()) {
+      return;
+    }
+
+    // Convert to 1-based indexing for printout
+    for (auto& pair : imag_eigval_components) {
+      pair.first += 1;
+    }
+
+    this->m_logger->template warn<log::ComplexRootsDavidson<typename R::value_type>>(
+        "The following roots are complex-valued. Associated eigenvectors are the real and imaginary part "
+        "of the pairs and the imaginary parts of the eigenvalues are ",
+        imag_eigval_components);
   }
 
   //! Applies the Davidson preconditioner
@@ -189,15 +227,59 @@ public:
     return opt;
   }
 
-  std::shared_ptr<Logger> logger;
-
 protected:
   void construct_residual(const std::vector<int>& roots, const CVecRef<R>& params, const VecRef<R>& actions) override {
     auto prof = this->profiler()->push("itsolv::construct_residual");
     assert(params.size() >= roots.size());
     const auto& eigvals = eigenvalues();
-    for (size_t i = 0; i < roots.size(); ++i)
+
+    auto subspace_solver = std::dynamic_pointer_cast<subspace::SubspaceSolverLinEig<R, Q, P>>(this->m_subspace_solver);
+    assert(subspace_solver);
+    const auto& imag_eigval_components = subspace_solver->imag_eigval_components();
+
+    for (size_t i = 0; i < roots.size(); ++i) {
       this->m_handlers->rr().axpy(-eigvals.at(roots[i]), params.at(i), actions.at(i));
+
+      auto it = std::ranges::find(imag_eigval_components, roots[i], [](const auto& pair) { return pair.first; });
+
+      if (it != imag_eigval_components.end()) {
+        // Ref.: https://doi.org/10.1063/1.2755681 (Appendix)
+        // The idea is the following: We make use of the fact that the real and imaginary parts of the
+        // eigenvectors belonging to the complex root pair are spanned by the same basis. This allows
+        // us to split the associated residual vectors into a part corresponding to the real and a part
+        // corresponding to the imaginary part as well. The actual (complex-valued) residual can then
+        // always be reconstructed from this and therefore we don't lose any information. The formulas are
+        // |(R_real)_i> = sum_j [ (|A_j> - (e_real)_i |b_j>) (c_real)_{ji} + (e_imag) |b_j> (c_imag)_{ji} ]
+        // |(R_imag)_i> = sum_j [ (|A_j> - (e_real)_i |b_j>) (c_imag)_{ji} - (e_imag) |b_j> (c_real)_{ji} ]
+        // where |A_j> is the j-th action and |b_j> the j-th trial vector. e are the complex conjugate
+        // eigenvalues and c the associated eigenvectors.
+        // Note: At this point, params and actions already contain the vectors transformed into the
+        // eigenbasis (aka.: multiplied with c). Due to the way we process these complex-valued vectors,
+        // the first vector in a pair is the one that has been transformed with the real and the second
+        // with the imaginary part of c.
+        // The above code has already dealt with the bulk of the necessary expression and we only need
+        // to add the part with the imaginary components of the eigenvalue pair. We use the knowledge
+        // about the ordering of vectors (which has been transformed with what eigenvector component)
+        // to compute the right thing without explicit access to the eigenvectors.
+        const auto distance = std::ranges::distance(imag_eigval_components.begin(), it);
+        const int offset = (distance % 2) == 0 ? 1 : -1;
+
+        auto root_it = std::ranges::find(roots, roots[i] + offset);
+        if (root_it == roots.end()) {
+          // We can only do this, if we have both components of a complex eigenvalue/eigenvector pair
+          // available here.
+          this->m_logger->warn(
+              "Complex conjugate eigenvalue pair incomplete in construct_residual (this can lead to poor convergence)");
+          continue;
+        }
+
+        const std::size_t param_idx = std::ranges::distance(roots.begin(), root_it);
+
+        // Note: The minus sign in above expression is implicitly taken into account as the
+        // imaginary parts of the complex conjugate eigenvalue pair has flipped signs
+        this->m_handlers->rr().axpy(it->second, params.at(param_idx), actions.at(i));
+      }
+    }
   }
 
   detail::DSpaceResetter<Q> m_dspace_resetter; //!< resets D space

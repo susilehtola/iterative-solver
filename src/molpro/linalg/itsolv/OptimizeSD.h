@@ -31,8 +31,7 @@ public:
       : SolverTemplate(std::make_shared<subspace::XSpace<R, Q, P>>(handlers, logger_),
                        std::static_pointer_cast<subspace::ISubspaceSolver<R, Q, P>>(
                            std::make_shared<subspace::SubspaceSolverOptSD<R, Q, P>>(logger_)),
-                       handlers, std::make_shared<Statistics>(), logger_),
-        logger(logger_) {}
+                       handlers, std::make_shared<Statistics>(), logger_) {}
 
   bool nonlinear() const override { return true; }
 
@@ -79,7 +78,6 @@ public:
     if (endl)
       cout << std::endl;
   }
-  std::shared_ptr<Logger> logger;
 
   int add_vector(R& parameters, R& residual, value_type value) override {
     using namespace subspace;
