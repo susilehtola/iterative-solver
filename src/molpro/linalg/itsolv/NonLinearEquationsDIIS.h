@@ -80,8 +80,15 @@ private:
   }
 
 public:
-  int add_vector(R& parameters, R& residual, value_type value) override {
+  // NB: this overrides the VecRef<R> overload of add_vector, not the single-R& overload, because that
+  // is the one actually reached from IterativeSolverAddVector (via the std::vector<R>& overload, which
+  // forwards to this one). The single-R& and std::vector<R>& overloads are left to their inherited
+  // IterativeSolverTemplate implementations, which forward here through virtual dispatch. Previously the
+  // Q-space pruning below (which enforces max_size_qspace) lived in the single-R& overload only, so it
+  // was never executed and the Q space grew without bound.
+  int add_vector(const VecRef<R>& parameters, const VecRef<R>& actions) override {
     auto prof = this->profiler()->push("itsolv::add_vector");
+    auto& residual = actions.front().get();
     auto error = std::sqrt(this->m_handlers->rr().dot(residual, residual));
     m_converged = error < this->m_convergence_threshold;
     using namespace subspace;
@@ -96,7 +103,7 @@ public:
     }
     //            std::cout << "H after delete Q "<<as_string(H)<<std::endl;
 
-    int nwork = IterativeSolverTemplate<NonLinearEquations, R, Q, P>::add_vector(parameters, residual);
+    int nwork = IterativeSolverTemplate<NonLinearEquations, R, Q, P>::add_vector(parameters, actions);
     this->m_errors.front() = error;
     return nwork;
   }
